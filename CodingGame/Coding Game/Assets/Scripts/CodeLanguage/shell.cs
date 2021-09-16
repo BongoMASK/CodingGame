@@ -10,14 +10,12 @@ public class shell : MonoBehaviour
 
     public void ExecuteCode() {
         output.text = "pseudo > ";
-        TokenError tokenError = pseudo.Run(userCode.text);
+        TokenError tokenError = pseudo.Run("<stdin>", userCode.text);
 
         if (tokenError.error != null)
             output.text = tokenError.error;
 
         else
-            output.text = tokenError.result;
-
-        Debug.Log(tokenError.result);
+            output.text = tokenError.ast.Display();
     }
 }
