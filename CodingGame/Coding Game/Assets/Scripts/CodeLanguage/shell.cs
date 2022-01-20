@@ -15,7 +15,7 @@ public class shell : MonoBehaviour
         if (result.error != null)
             output.text = result.error.Display();
 
-        else
+        else if(result != null)
             output.text = result.value.Display();
     }
 }

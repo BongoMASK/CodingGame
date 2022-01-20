@@ -62,6 +62,65 @@ public class Number {
         return new RTResult(this, null);
     }
 
+    public RTResult GetComparison_EQ(dynamic other) {
+        if (other.GetType() == GetType())
+            return new RTResult(new Number(value == other.value).SetContext(context), null);
+        return new RTResult(this, null);
+    }
+
+    public RTResult GetComparison_NE(dynamic other) {
+        if (other.GetType() == GetType())
+            return new RTResult(new Number(value != other.value).SetContext(context), null);
+        return new RTResult(this, null);
+    }
+
+    public RTResult GetComparison_LT(dynamic other) {
+        if (other.GetType() == GetType())
+            return new RTResult(new Number(value < other.value).SetContext(context), null);
+        return new RTResult(this, null);
+    }
+
+    public RTResult GetComparison_GT(dynamic other) {
+        if (other.GetType() == GetType())
+            return new RTResult(new Number(value > other.value).SetContext(context), null);
+        return new RTResult(this, null);
+    }
+
+    public RTResult GetComparison_LTE(dynamic other) {
+        if (other.GetType() == GetType())
+            return new RTResult(new Number(value <= other.value).SetContext(context), null);
+        return new RTResult(this, null);
+    }
+
+    public RTResult GetComparison_GTE(dynamic other) {
+        if (other.GetType() == GetType())
+            return new RTResult(new Number(value >= other.value).SetContext(context), null);
+        return new RTResult(this, null);
+    }
+
+    public RTResult AndedBy(dynamic other) {
+        if (other.GetType() == GetType())
+            return new RTResult(new Number(value && other.value).SetContext(context), null);
+        return new RTResult(this, null);
+    }
+    public RTResult OredBy(dynamic other) {
+        if (other.GetType() == GetType())
+            return new RTResult(new Number(value || other.value).SetContext(context), null);
+        return new RTResult(this, null);
+    }
+
+    public RTResult Notted() {
+        int x = value == 0 ? 1 : 0;
+        return new RTResult(new Number(x).SetContext(context), null);
+    }
+
+    public Number Copy() {
+        Number copy = new Number(value);
+        copy.SetPos(posStart, posEnd);
+        copy.SetContext(context);
+        return copy;
+    }
+
     public string Display() {
         return value.ToString();
     }

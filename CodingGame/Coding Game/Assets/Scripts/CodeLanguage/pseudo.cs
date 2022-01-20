@@ -16,24 +16,37 @@ public class pseudo {
         EQ,
         LPAREN,
         RPAREN,
+        EE,
+        NE,
+        LT,
+        GT,
+        LTE,
+        GTE,
         EOF
     }
 
     protected string[] KEYWORDS = {
-        "VAR"
+        "Var",
+        "and",
+        "not",
+        "or",
+        "if",
+        "then",
+        "elseIf",
+        "else"
     };
 
     protected string DIGITS = "0123456789";
     protected string LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
     protected string LETTERS_DIGITS = "0123456789" + "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz" + "_";
-
+    SymbolTable globalSymbolTable = new SymbolTable("null", new Number(0));
 
     public RTResult Run(string fileName, string text) {
         Lexer lexer = new Lexer(fileName, text);
 
         TokenError tokenError = lexer.MakeTokens();
 
-        if(tokenError.error != null) 
+        if (tokenError.error != null)
             return new RTResult(null, tokenError.error);
 
         // Generate Abstract Syntax Tree (AST)
@@ -45,6 +58,7 @@ public class pseudo {
         // else Run Program
         Interpreter interpreter = new Interpreter();
         Context context = new Context("<console>");
+        context.symbolTable = globalSymbolTable;
         RTResult result = interpreter.Visit(parseResult.node, context);
 
         return result;
@@ -65,9 +79,9 @@ public class NumberNode {
 
 public class VarAccessNode {
 
-    Token varNameToken;
-    Position posStart;
-    Position posEnd;
+    public Token varNameToken;
+    public Position posStart;
+    public Position posEnd;
 
     public VarAccessNode(Token varNameToken) {
         this.varNameToken = varNameToken;
@@ -79,10 +93,10 @@ public class VarAccessNode {
 
 public class VarAssignNode {
 
-    Token varNameToken;
-    dynamic valueNode;
-    Position posStart;
-    Position posEnd;
+    public Token varNameToken;
+    public dynamic valueNode;
+    public Position posStart;
+    public Position posEnd;
 
     public VarAssignNode(Token varNameToken, dynamic valueNode) {
         this.varNameToken = varNameToken;
@@ -140,12 +154,38 @@ public class BinOpNode {
     }
 }
 
+public class IfNode {
+    public List<Case> cases = new List<Case>();
+    public dynamic elseCase;
+    public Position posStart, posEnd;
+
+    public IfNode(List<Case> _cases, dynamic _elseCase) {
+        cases = _cases;
+        elseCase = _elseCase;
+        posStart = _cases[0].node.posStart;
+        posEnd = _cases[0].node.posEnd;
+    }
+}
+
+public class Case {
+    public dynamic condition, node;
+
+    public Case(dynamic condition, dynamic node) {
+        this.condition = condition;
+        this.node = node;
+    }
+}
+
 public class ParseResult {
     public Error error;
-
     public dynamic node;
-
     public Number number;
+    int advanceCount = 0;
+
+    public ParseResult() {
+        error = null;
+        node = null;
+    }
 
     public ParseResult(Error error, dynamic node) {
         this.error = error;
@@ -157,17 +197,19 @@ public class ParseResult {
         this.number = number;
     }
 
-    public dynamic Register(ParseResult parseResult) {
-        if (parseResult.error != null) 
-            error = parseResult.error;
-
-        if (parseResult.node != null)
-            return parseResult.node;
-
-        return null;
+    public void RegisterAdvancement() {
+        advanceCount++;
     }
 
-    public NumberNode Register(dynamic node) {
+    public dynamic Register(ParseResult parseResult) {
+        advanceCount += parseResult.advanceCount;
+        if (parseResult.error != null)
+            error = parseResult.error;
+
+        return parseResult.node;
+    }
+
+    public dynamic Register(dynamic node) {
         return node;
     }
 
@@ -177,7 +219,8 @@ public class ParseResult {
     }
 
     public ParseResult Failure(Error error) {
-        this.error = error;
+        if (error != null || advanceCount == 0)
+            this.error = error;
         return this;
     }
 }
@@ -200,54 +243,125 @@ class Parser : pseudo {
         return result;
     }
 
-    NumberNode Advance() {
+    Token Advance() {
         tokenIndex++;
         if (tokenIndex < tokens.Length)
-            currentToken = tokens[tokenIndex].Copy();
-        return new NumberNode(currentToken);
+            currentToken = tokens[tokenIndex];
+        return currentToken;
     }
 
+    ParseResult IfExpr() {
+        ParseResult result = new ParseResult();
+        List<Case> cases = new List<Case>();
+        dynamic elseCase = null;
 
+        if (!currentToken.Matches(TokenType.KEYWORD, "if"))
+            return result.Failure(new InvalidSyntaxError(currentToken.posStart, currentToken.posEnd, "Expected 'if'"));
+
+        result.RegisterAdvancement();
+        Advance();
+
+        dynamic condition = result.Register(Expr());
+        if (result.error != null)
+            return result;
+
+        if(!currentToken.Matches(TokenType.KEYWORD, "then"))
+            return result.Failure(new InvalidSyntaxError(currentToken.posStart, currentToken.posEnd, "Expected 'then' after 'if' statement"));
+
+        result.RegisterAdvancement();
+        Advance();
+
+        dynamic expr = result.Register(Expr());
+        if (result.error != null)
+            return result;
+        cases.Add(new Case(condition, expr));
+
+        while (currentToken.Matches(TokenType.KEYWORD, "elseIf")) {
+            result.RegisterAdvancement();
+            Advance();
+
+            dynamic cond = result.Register(Expr());
+            if (result.error != null)
+                return result;
+
+            if (!currentToken.Matches(TokenType.KEYWORD, "then"))
+                return result.Failure(new InvalidSyntaxError(currentToken.posStart, currentToken.posEnd, "Expected 'then' after 'if' statement"));
+
+            result.RegisterAdvancement();
+            Advance();
+
+            dynamic exprr = result.Register(Expr());
+            if (result.error != null)
+                return result;
+            cases.Add(new Case(cond, exprr));
+        }
+
+        if(currentToken.Matches(TokenType.KEYWORD, "else")) {
+            result.RegisterAdvancement();
+            Advance();
+
+            elseCase = result.Register(Expr());
+            if(result.error != null) 
+                return result;
+        }
+
+        return result.Success(new IfNode(cases, elseCase));
+    }
 
     ParseResult Atom() {
         ParseResult parseResult = new ParseResult(null, (NumberNode)null);
         Token tok = currentToken;
 
         if (tok.type == TokenType.INT || tok.type == TokenType.FLOAT) {   // Integers and floats
-            parseResult.Register(Advance());
+            parseResult.RegisterAdvancement();
+            Advance();
             NumberNode number = new NumberNode(tok);
             return parseResult.Success(number);
         }
 
-        else if(tok.type == TokenType.IDENTIFIER) {
-            parseResult.Register(Advance());
+        else if (tok.type == TokenType.IDENTIFIER) {
+            parseResult.RegisterAdvancement();
+            Advance();
             return parseResult.Success(new VarAccessNode(tok));
         }
 
         else if (tok.type == TokenType.LPAREN) {     // Brackets ( )
-            parseResult.Register(Advance());
+            parseResult.RegisterAdvancement();
+            Advance();
             dynamic expr = parseResult.Register(Expr());
 
             if (parseResult.error != null)
                 return parseResult;
 
             if (currentToken.type == TokenType.RPAREN) {
-                parseResult.Register(Advance());
+                parseResult.RegisterAdvancement();
+                Advance();
                 return parseResult.Success(expr);
             }
             else
                 return parseResult.Failure(new InvalidSyntaxError(currentToken.posStart, currentToken.posEnd, "Expected ')'"));
         }
+
+        // If else
+        else if(tok.Matches(TokenType.KEYWORD, "if")) {
+            dynamic if_expr = parseResult.Register(IfExpr());
+            if (parseResult.error != null)
+                return parseResult;
+
+            return parseResult.Success(if_expr);
+        }
+
         // ERROR
-        return parseResult.Failure(new InvalidSyntaxError(tok.posStart, tok.posEnd, "Expected int, float, +, -, or ("));
+        return parseResult.Failure(new InvalidSyntaxError(tok.posStart, tok.posEnd, "Expected int, float, identifier, '+', '-', or '('"));
     }
 
     ParseResult Factor() {
         ParseResult parseResult = new ParseResult(null, (NumberNode)null);
         Token tok = currentToken;
 
-        if(tok.type == TokenType.PLUS || tok.type == TokenType.MINUS) {     // Unary Operators (-, +)
-            parseResult.Register(Advance());
+        if (tok.type == TokenType.PLUS || tok.type == TokenType.MINUS) {     // Unary Operators (-, +)
+            parseResult.RegisterAdvancement();
+            Advance();
             dynamic factor = parseResult.Register(Factor());
 
             if (parseResult.error != null)
@@ -255,40 +369,79 @@ class Parser : pseudo {
 
             return parseResult.Success(new UnaryOpNode(tok, factor));
         }
-        return binOperator(Atom, TokenType.POWER, TokenType.POWER, Factor);
+
+        dynamic node = parseResult.Register(binOperator(Atom, TokenType.POWER, TokenType.POWER, Factor));
+        if (parseResult.error != null)
+            return parseResult.Failure(new InvalidSyntaxError(tok.posStart, tok.posEnd, "Expected 'VAR', int, float, identifier, '+', '-', or '('"));
+
+        return parseResult.Success(node);
     }
 
     ParseResult Term() {
         return binOperator(Factor, TokenType.MUL, TokenType.DIV);
     }
 
-    ParseResult Expr() {
-        ParseResult res = null;
+    ParseResult ArithExpr() {
+        return binOperator(Term, TokenType.PLUS, TokenType.MINUS);
+    }
 
-        if (currentToken.Matches(TokenType.KEYWORD, "VAR")) {
-            res.Register(Advance());
+    ParseResult CompExpr() {
+        ParseResult res = new ParseResult();
+        
+        if(currentToken.Matches(TokenType.KEYWORD, "not")) {
+            Token token = currentToken;
+            res.RegisterAdvancement();
+            Advance();
+
+            dynamic Node = res.Register(CompExpr());
+            if (res.error != null)
+                return res;
+
+            return res.Success(new UnaryOpNode(token, Node));
+        }
+        dynamic node = res.Register(binOperator(ArithExpr, TokenType.EE, TokenType.NE, TokenType.LT, TokenType.GT, TokenType.LTE, TokenType.GTE));
+
+        if (res.error != null)
+            return res.Failure(new InvalidSyntaxError(currentToken.posStart, currentToken.posEnd, "Expected int, float, identifier, '+', '-', '(', 'not'"));
+
+        return res.Success(node);
+    }
+
+    ParseResult Expr() {
+        ParseResult res = new ParseResult();
+
+        if (currentToken.Matches(TokenType.KEYWORD, "Var")) {
+            res.RegisterAdvancement();
+            Advance();
 
             if (currentToken.type != TokenType.IDENTIFIER)
                 return res.Failure(new InvalidSyntaxError(currentToken.posStart, currentToken.posEnd, "Expected identifier"));
 
             dynamic varName = currentToken;
-            res.Register(Advance());
+            res.RegisterAdvancement();
+            Advance();
 
-            if(currentToken.type != TokenType.EQ)
+            if (currentToken.type != TokenType.EQ)
                 return res.Failure(new InvalidSyntaxError(currentToken.posStart, currentToken.posEnd, "Expected '='"));
 
-            res.Register(Advance());
-            ParseResult expr = res.Register(Expr());
+            res.RegisterAdvancement();
+            Advance();
+            dynamic p = res.Register(Expr());
             if (res.error != null)
                 return res;
 
-            return res.Success(new VarAssignNode(varName, expr));
+            return res.Success(new VarAssignNode(varName, p));
         }
 
-        return binOperator(Term, TokenType.MINUS, TokenType.PLUS);
+        dynamic node = res.Register(binOperator(CompExpr, new Token(TokenType.KEYWORD, "and"), new Token(TokenType.KEYWORD, "or")));
+
+        if (res.error != null)
+            return res.Failure(new InvalidSyntaxError(currentToken.posStart, currentToken.posEnd, "Expected 'VAR', int, float, identifier, '+', '-', or '('"));
+
+        return res.Success(node);
     }
 
-    ParseResult binOperator(Func<ParseResult> func, TokenType operator1, TokenType operator2 = 0, Func<ParseResult> func1 = null) {
+    ParseResult binOperator(Func<ParseResult> func, TokenType operator1, TokenType operator2, Func<ParseResult> func1 = null) {
         if (func1 == null)
             func1 = func;
 
@@ -300,7 +453,53 @@ class Parser : pseudo {
 
         while (currentToken.type == operator1 || currentToken.type == operator2) {
             Token opToken = currentToken;
-            parseResult.Register(Advance());
+            parseResult.RegisterAdvancement();
+            Advance();
+            dynamic right = parseResult.Register(func1());
+
+            if (parseResult.error != null)
+                return parseResult;
+
+            left = new BinOpNode(left, opToken, right);
+        }
+        return parseResult.Success(left);
+    }
+
+    ParseResult binOperator(Func<ParseResult> func, TokenType op1, TokenType op2, TokenType op3, TokenType op4, TokenType op5, TokenType op6) {
+        ParseResult parseResult = new ParseResult(null, (BinOpNode)null);
+        dynamic left = parseResult.Register(func());
+
+        if (parseResult.error != null)
+            return parseResult;
+
+        while (currentToken.type == op1 || currentToken.type == op2 || currentToken.type == op3 || currentToken.type == op4 || currentToken.type == op5 || currentToken.type == op6) {
+            Token opToken = currentToken;
+            parseResult.RegisterAdvancement();
+            Advance();
+            dynamic right = parseResult.Register(func());
+
+            if (parseResult.error != null)
+                return parseResult;
+
+            left = new BinOpNode(left, opToken, right);
+        }
+        return parseResult.Success(left);
+    }
+
+    ParseResult binOperator(Func<ParseResult> func, Token token1, Token token2 = null, Func<ParseResult> func1 = null) {
+        if (func1 == null)
+            func1 = func;
+
+        ParseResult parseResult = new ParseResult(null, (BinOpNode)null);
+        dynamic left = parseResult.Register(func());
+
+        if (parseResult.error != null)
+            return parseResult;
+
+        while (currentToken.Matches(token1) || currentToken.Matches(token2)) {
+            Token opToken = currentToken;
+            parseResult.RegisterAdvancement();
+            Advance();
             dynamic right = parseResult.Register(func1());
 
             if (parseResult.error != null)
@@ -346,7 +545,7 @@ public class Position {
     }
 
     public Position Copy() {
-        return new Position(index, line, column, fileName, fileTxt); 
+        return new Position(index, line, column, fileName, fileTxt);
     }
 }
 
@@ -360,7 +559,7 @@ public class Error : pseudo {
     public Error(Position posStart, Position posEnd, string errorName, string details) {
         this.errorName = errorName;
         this.details = details;
-        this.posStart= posStart;
+        this.posStart = posStart;
         this.posEnd = posEnd;
     }
 
@@ -375,7 +574,11 @@ class IllegalCharError : Error {
     public IllegalCharError(Position posStart, Position posEnd, string details) : base(posStart, posEnd, "Illegal Character", details) { }
 }
 
-class InvalidSyntaxError :Error {
+class ExpectedCharError : Error {
+    public ExpectedCharError(Position posStart, Position posEnd, string details = "") : base(posStart, posEnd, "Invalid Syntax", details) { }
+}
+
+class InvalidSyntaxError : Error {
     public InvalidSyntaxError(Position posStart, Position posEnd, string details = "") : base(posStart, posEnd, "Invalid Syntax", details) { }
 }
 
@@ -403,7 +606,7 @@ class RTError : Error {
             context = context.parent;
         }
         return "Traceback (most recent call last):\n" + result;
-    }  
+    }
 }
 
 public class RTResult {
@@ -429,7 +632,7 @@ public class RTResult {
 
     public RTResult Failure(Error error) {
         this.error = error;
-        return this; 
+        return this;
     }
 }
 
@@ -438,29 +641,47 @@ public class Context {
     public string displayName;
     public Context parent;
     public Position parentEntryPos;
+    public SymbolTable symbolTable;
 
     public Context(string displayName, Context parent = null, Position parentEntryPos = null) {
         this.displayName = displayName;
         this.parent = parent;
         this.parentEntryPos = parentEntryPos;
+        symbolTable = null;
     }
 }
 
 public class SymbolTable {
 
     Dictionary<string, dynamic> symbols = new Dictionary<string, dynamic>();
-    Context parent;
+    Dictionary<string, dynamic> parent = new Dictionary<string, dynamic>();
 
     public SymbolTable() {
         symbols = null;
         parent = null;
     }
 
-    void Get(string name) {
-        if (symbols.ContainsKey(name)) {
-            dynamic value;
+    public SymbolTable(string name, dynamic value) {
+        Set(name, value);
+    }
+
+    public Number Get(string name) {
+        dynamic value = null;
+        if (symbols.ContainsKey(name))
             value = symbols[name];
-        }
+
+        if (value == null && parent != null)
+            return parent[name];
+
+        return value;
+    }
+
+    public void Set(string name, dynamic value) {
+        symbols[name] = value;
+    }
+
+    public void Remove(string name) {
+        symbols[name] = null;
     }
 }
 
@@ -504,6 +725,10 @@ public class Token : pseudo {
         return this.type == type && value == this.value;
     }
 
+    public bool Matches(Token token) {
+        return type == token.type && value == token.value;
+    }
+
     public string Display() {
         string activeVar = value.ToString();
         string displayText = $"{type}: {activeVar}";
@@ -541,42 +766,61 @@ class Lexer : pseudo {
             if (currectChar == ' ' || currectChar == '\t') {
                 Advance();
             }
-            else if (DIGITS.Contains(currectChar.ToString())) {
+            else if (DIGITS.Contains(currectChar.ToString())) {     // NUMBER
                 tokens.Add(MakeNumber());
             }
-            else if(LETTERS.Contains(currectChar.ToString())) {
+            else if (LETTERS.Contains(currectChar.ToString())) {     // DECLARATION
                 tokens.Add(MakeIdentifier());
             }
-            else if (currectChar == '+') {
+            else if (currectChar == '+') {                          // ADDITION
                 tokens.Add(new Token(TokenType.PLUS, pos));
                 Advance();
             }
-            else if (currectChar == '-') {
+            else if (currectChar == '-') {                          // SUBTRACTION
                 tokens.Add(new Token(TokenType.MINUS, pos));
                 Advance();
             }
-            else if (currectChar == '*') {
+            else if (currectChar == '*') {                          // MULTIPLICATION
                 tokens.Add(new Token(TokenType.MUL, pos));
                 Advance();
             }
-            else if (currectChar == '/') {
+            else if (currectChar == '/') {                          // DIVISION
                 tokens.Add(new Token(TokenType.DIV, pos));
                 Advance();
             }
-            else if (currectChar == '^') {
+            else if (currectChar == '^') {                          // POWER
                 tokens.Add(new Token(TokenType.POWER, pos));
                 Advance();
             }
-            else if (currectChar == '=') {
+            /*else if (currectChar == '=') {                          // ASSIGNMENT =
                 tokens.Add(new Token(TokenType.EQ, pos));
                 Advance();
-            }
-            else if (currectChar == '(') {
+            }*/
+            else if (currectChar == '(') {                          // LEFT PARENTHESIS
                 tokens.Add(new Token(TokenType.LPAREN, pos));
                 Advance();
             }
-            else if (currectChar == ')') {
+            else if (currectChar == ')') {                          // RIGHT PARENTHESIS
                 tokens.Add(new Token(TokenType.RPAREN, pos));
+                Advance();
+            }
+            else if (currectChar == '!') {                           // NOT EQUALS
+                TokenError t = MakeNotEquals();
+                if (t.error != null)
+                    return new TokenError(null, t.error);
+
+                tokens.Add(t.results[0]);
+            }
+            else if (currectChar == '=') {                          // ASSIGNMENT = / EQUALS
+                tokens.Add(MakeEquals());
+                Advance();
+            }
+            else if (currectChar == '<') {                          // LESS THAN
+                tokens.Add(MakeLessThan());
+                Advance();
+            }
+            else if (currectChar == '>') {                          // GREATER THAN
+                tokens.Add(MakeGreaterThan());
                 Advance();
             }
             else {
@@ -619,13 +863,66 @@ class Lexer : pseudo {
         while (currectChar != '\0' && LETTERS_DIGITS.Contains(currectChar.ToString())) {
             idStr += currectChar;
             Advance();
-        }
+        } 
 
         TokenType type = FindInArray(idStr) ? TokenType.KEYWORD : TokenType.IDENTIFIER;
-        return new Token(type, idStr, posStart, pos);   
+        return new Token(type, idStr, posStart, pos);
     }
 
-    bool FindInArray(string b) {
+    TokenError MakeNotEquals() {
+        Position posStart = pos.Copy();
+        Advance();
+
+        if (currectChar == '=') {
+            Advance();
+            Token[] t = { new Token(TokenType.NE, posStart, pos.Copy()) };
+            return new TokenError(t, null);
+        }
+
+        Advance();
+        return new TokenError(null, new ExpectedCharError(posStart, pos.Copy(), "'=' (after '!')"));
+    }
+
+    Token MakeEquals() {
+        TokenType type = TokenType.EQ;
+        Position posStart = pos.Copy();
+        Advance();
+
+        if (currectChar == '=') {
+            Advance();
+            type = TokenType.EE;
+        }
+
+        return new Token(type, posStart, pos.Copy());
+    }
+
+    Token MakeLessThan() {
+        TokenType type = TokenType.LT;
+        Position posStart = pos.Copy();
+        Advance();
+
+        if (currectChar == '=') {
+            Advance();
+            type = TokenType.LTE;
+        }
+
+        return new Token(type, posStart, pos.Copy());
+    }
+
+    Token MakeGreaterThan() {
+        TokenType type = TokenType.GT;
+        Position posStart = pos.Copy();
+        Advance();
+
+        if (currectChar == '=') {
+            Advance();
+            type = TokenType.GTE;
+        }
+
+        return new Token(type, posStart, pos.Copy());
+    }
+
+    public bool FindInArray(string b) {
         string a = Array.Find(KEYWORDS, element => element == b);
         return a != null;
     }
